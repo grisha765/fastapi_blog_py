@@ -9,7 +9,7 @@ FastAPI application with JWT authentication, user management, and post/comment h
 
 ```shell
 git clone https://github.com/grisha765/fastapi_blog_py.git
-cd FastAPI_PY
+cd fastapi_blog_py
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
 ```
