@@ -57,7 +57,8 @@ venv/bin/uvicorn main:app --reload
 ### Database Initialization
 
 1. The database is initialized on startup with the necessary tables for users, posts, and comments.
-2. Example Usage
+
+### Example Usage
 
 ***Register a new user***
 
