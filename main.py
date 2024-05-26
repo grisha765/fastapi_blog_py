@@ -1,16 +1,15 @@
+import aiosqlite
 from fastapi import FastAPI, HTTPException, Depends, status, Request, Response, Security
 from fastapi.responses import JSONResponse 
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from fastapi_jwt import JwtAccessBearer, JwtAuthorizationCredentials
 from datetime import timedelta
 
 db_file = "data.db"
 
-app = FastAPI(
-    title="FastAPI_PY"
-)
+app = FastAPI(title="FastAPI_PY")
 
 # Secret key for JWT
 SECRET_KEY = "123"
@@ -19,62 +18,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 jwt_access = JwtAccessBearer(secret_key=SECRET_KEY, algorithm=ALGORITHM)
 
-tokenUrl="login"
+tokenUrl = "login"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=tokenUrl)
-
-users = [
-    {"id":1, "name":"Grisha", "role":"admin", "pass": "123"},
-    {"id":2, "name":"Dima", "role":"user", "pass": "1234"},
-    {"id":3, "name":"Pasha", "role":"mute", "pass": "1235"}
-    ]
-
-posts = [
-    {"id":1, "posts":[
-        {"id":1, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Dima", "text":"text1"},
-            {"id": 2, "name":"Dima", "text":"text2"},
-        ]},
-        {"id":2, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Dima", "text":"text3"},
-            {"id": 2, "name":"Dima", "text":"text4"},
-        ]},
-        {"id":3, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Dima", "text":"text5"},
-            {"id": 2, "name":"Dima", "text":"text6"},
-        ]}
-        ]
-    },
-    {"id":2, "posts":[
-        {"id":1, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Grisha", "text":"text1"},
-            {"id": 2, "name":"Grisha", "text":"text2"},
-        ]},
-        {"id":2, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Grisha", "text":"text3"},
-            {"id": 2, "name":"Grisha", "text":"text4"},
-        ]},
-        {"id":3, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Grisha", "text":"text5"},
-            {"id": 2, "name":"Grisha", "text":"text6"},
-        ]}
-        ]
-    },
-    {"id":3, "posts":[
-        {"id":1, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Pasha", "text":"text1"},
-            {"id": 2, "name":"Pasha", "text":"text2"},
-        ]},
-        {"id":2, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Pasha", "text":"text3"},
-            {"id": 2, "name":"Pasha", "text":"text4"},
-        ]},
-        {"id":3, "title":"title", "text":"text", "comments": [
-            {"id": 1, "name":"Pasha", "text":"text5"},
-            {"id": 2, "name":"Pasha", "text":"text6"},
-        ]}
-        ]
-    }
-]
 
 class UserGet(BaseModel):
     id: int = Field(ge=0)
@@ -101,7 +46,7 @@ class TokenData(BaseModel):
 
 class PostPost(BaseModel):
     title: str = Field(max_length=20, json_schema_extra={"example": "Example title"})
-    text: str =  Field(json_schema_extra={"example": "Example text"})
+    text: str = Field(json_schema_extra={"example": "Example text"})
 
 class CommentGet(BaseModel):
     id: int
@@ -117,18 +62,49 @@ class PostGet(BaseModel):
     text: str
     comments: List[CommentGet]
 
-class Posts_get(BaseModel):
+class PostsGet(BaseModel):
     id: int = Field(ge=0)
     posts: List[PostGet]
 
-# функция авторизации
-def authenticate_user(name: str, password: str):
-    for user in users:
-        if user['name'] == name and user['pass'] == password:
-            return user
+# Функция для инициализации базы данных
+async def init_db():
+    async with aiosqlite.connect(db_file) as db:
+        await db.execute('''CREATE TABLE IF NOT EXISTS users (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                name TEXT NOT NULL,
+                                role TEXT NOT NULL,
+                                password TEXT NOT NULL
+                            )''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS posts (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                user_id INTEGER,
+                                title TEXT NOT NULL,
+                                text TEXT NOT NULL,
+                                FOREIGN KEY(user_id) REFERENCES users(id)
+                            )''')
+        await db.execute('''CREATE TABLE IF NOT EXISTS comments (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                post_id INTEGER,
+                                name TEXT NOT NULL,
+                                text TEXT NOT NULL,
+                                FOREIGN KEY(post_id) REFERENCES posts(id)
+                            )''')
+        await db.commit()
+
+@app.on_event("startup")
+async def startup():
+    await init_db()
+
+# Функция авторизации пользователя
+async def authenticate_user(name: str, password: str):
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM users WHERE name = ? AND password = ?", (name, password))
+        user = await cursor.fetchone()
+        if user:
+            return {"id": user[0], "name": user[1], "role": user[2], "pass": user[3]}
     return None
 
-# создание jwt токена
+# Создание JWT токена
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     if expires_delta is not None:
         to_encode = data.copy()
@@ -137,10 +113,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         return jwt_access.create_access_token(subject=data)
 
-# логин пользователя
+# Логин пользователя
 @app.post(f"/{tokenUrl}", response_model=Token)
 async def login_for_access_token(response: Response, form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
+    user = await authenticate_user(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -154,7 +130,7 @@ async def login_for_access_token(response: Response, form_data: OAuth2PasswordRe
     response.set_cookie(key="access_token", value=access_token, httponly=True)
     return response
 
-# чтение куки и добавления его в заголовок авторизации
+# Чтение куки и добавления его в заголовок авторизации
 @app.middleware("http")
 async def add_cookie_to_request(request: Request, call_next):
     token = request.cookies.get("access_token")
@@ -165,14 +141,14 @@ async def add_cookie_to_request(request: Request, call_next):
     response = await call_next(request)
     return response
 
-# разлогин пользователя
+# Разлогин пользователя
 @app.get("/logout", response_class=JSONResponse)
 async def logout_for_access_token(response: Response):
     response = JSONResponse(content={"message": "Successfully logged out"})
     response.delete_cookie(key="access_token")
     return response
 
-# получение авторизованного пользователя
+# Получение авторизованного пользователя
 @app.get("/user")
 async def get_login_user(credentials: JwtAuthorizationCredentials = Security(jwt_access)):
     user_id: int = credentials["id"]
@@ -184,23 +160,30 @@ async def get_login_user(credentials: JwtAuthorizationCredentials = Security(jwt
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )   
-    for user in users:
-        if user["id"] == user_id:
-            return {"id":user["id"], "name":user["name"], "role":user["role"]}
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+        user = await cursor.fetchone()
+        if user:
+            return {"id": user[0], "name": user[1], "role": user[2]}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-# добавление пользователя по user_id
-# а также создаётся posts для него
+# Добавление пользователя
 @app.post("/register")
 async def add_register_user(add_user: List[UserPost]):
-    max_id = max((user["id"] for user in users), default=0) + 1
-    for user in add_user:
-        user_model = UserGet(id=max_id, role="user", **user.model_dump())
-        user = {"id": max_id, "name": user_model.name, "role":user_model.role, "pass": user_model.password}
-        posts.append({"id": max_id, "posts": []})
-        users.append(user)
-        return {"status": 200, "data": user}
+    async with aiosqlite.connect(db_file) as db:
+        for user in add_user:
+            await db.execute("INSERT INTO users (name, role, password) VALUES (?, ?, ?)", (user.name, "user", user.password))
+            cursor = await db.execute("SELECT last_insert_rowid()")
+            user_id = await cursor.fetchone()
+            await db.commit()
+            return {"status": 200, "data": {"id": user_id[0], "name": user.name, "role": "user", "password": user.password}}
 
-# изменение имени авторизованного пользователя
+# Изменение имени авторизованного пользователя
 @app.post("/user")
 async def change_name_login_user(new_name: str, credentials: JwtAuthorizationCredentials = Security(jwt_access)):
     user_id: int = credentials["id"]
@@ -212,28 +195,43 @@ async def change_name_login_user(new_name: str, credentials: JwtAuthorizationCre
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    for user in users:
-        if user["id"] == user_id:
-            user["name"] = new_name
-            return {"status": 200, "new_name": new_name}
+    async with aiosqlite.connect(db_file) as db:
+        await db.execute("UPDATE users SET name = ? WHERE id = ?", (new_name, user_id))
+        await db.commit()
+        return {"status": 200, "new_name": new_name}
 
-# получение постов по user_id
+# Получение постов по user_id
 @app.get("/posts/{user_id}", response_model=List[PostGet])
 async def get_api_user_posts(user_id: int):
-    for post in posts:
-        if post["id"] == user_id:
-            return post["posts"]
-    raise HTTPException(status_code=404, detail="Posts not found for user")
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM posts WHERE user_id = ?", (user_id,))
+        posts = await cursor.fetchall()
+        if posts:
+            result = []
+            for post in posts:
+                cursor = await db.execute("SELECT * FROM comments WHERE post_id = ?", (post[0],))
+                comments = await cursor.fetchall()
+                result.append(PostGet(id=post[0], title=post[2], text=post[3], comments=[CommentGet(id=comment[0], name=comment[2], text=comment[3]) for comment in comments]))
+            return result
+        else:
+            raise HTTPException(status_code=404, detail="Posts not found for user")
 
-# получение всех постов и комментариев под ним
-@app.get("/posts", response_model=List[Posts_get])
+# Получение всех постов и комментариев под ними
+@app.get("/posts", response_model=List[PostsGet])
 async def get_api_posts(limit: int = 5, offset: int = 0):
-    return posts[offset:][:limit]
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM posts LIMIT ? OFFSET ?", (limit, offset))
+        posts = await cursor.fetchall()
+        result = []
+        for post in posts:
+            cursor = await db.execute("SELECT * FROM comments WHERE post_id = ?", (post[0],))
+            comments = await cursor.fetchall()
+            result.append(PostGet(id=post[0], title=post[2], text=post[3], comments=[CommentGet(id=comment[0], name=comment[2], text=comment[3]) for comment in comments]))
+        return result
 
-# проверка и создание новых постов для авторизованных пользователей
+# Проверка и создание новых постов для авторизованных пользователей
 @app.post("/post")
 async def add_login_user_post(add_posts: List[PostPost], credentials: JwtAuthorizationCredentials = Security(jwt_access)):
-    new_post_models = []
     user_id: int = credentials["id"]
     username: str = credentials["name"]
     role: str = credentials["role"]
@@ -244,31 +242,33 @@ async def add_login_user_post(add_posts: List[PostPost], credentials: JwtAuthori
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    for post_data in add_posts:
-        try:
-            max_id = max((post['id'] for category in posts for post in category['posts']), default=0) + 1
-            new_post_model = PostGet(id=max_id, **post_data.model_dump(), comments=[])
-            new_post_models.append(new_post_model)
-        except ValidationError as e:
-            raise ValueError({"status": 422, "data": "Validation error", "details": e.errors()})
-    for item in posts:
-        if item['id'] == user_id:
-            for new_post in new_post_models:
-                item['posts'].append(new_post.model_dump())
-            return {"status": 200, "data": item['posts']}
-    else:
-        raise HTTPException(status_code=404, detail=f"No post list found with id: {user_id}")
+    async with aiosqlite.connect(db_file) as db:
+        for post_data in add_posts:
+            await db.execute("INSERT INTO posts (user_id, title, text) VALUES (?, ?, ?)", (user_id, post_data.title, post_data.text))
+        await db.commit()
+        cursor = await db.execute("SELECT * FROM posts WHERE user_id = ?", (user_id,))
+        posts = await cursor.fetchall()
+        result = []
+        for post in posts:
+            cursor = await db.execute("SELECT * FROM comments WHERE post_id = ?", (post[0],))
+            comments = await cursor.fetchall()
+            result.append(PostGet(id=post[0], title=post[2], text=post[3], comments=[CommentGet(id=comment[0], name=comment[2], text=comment[3]) for comment in comments]))
+        return {"status": 200, "data": result}
 
-# получение комментариев от отпределённого поста пользователя
+# Получение комментариев от определенного поста пользователя
 @app.get("/comments/{user_id}/{post_id}", response_model=List[CommentGet])
 async def comments_get(user_id: int, post_id: int):
-    for post in posts:
-        if post["id"] == user_id:
-            for comments in post["posts"]:
-                if comments["id"] == post_id:
-                    return comments["comments"]
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM posts WHERE user_id = ? AND id = ?", (user_id, post_id))
+        post = await cursor.fetchone()
+        if post:
+            cursor = await db.execute("SELECT * FROM comments WHERE post_id = ?", (post[0],))
+            comments = await cursor.fetchall()
+            return [CommentGet(id=comment[0], name=comment[2], text=comment[3]) for comment in comments]
+        else:
+            raise HTTPException(status_code=404, detail="Post not found")
 
-# отправка комментариев от авторизированных пользователей под определнный пост определенного пользователя
+# Отправка комментариев от авторизованных пользователей под определенный пост определенного пользователя
 @app.post("/comment")
 async def add_comment(user_post_id: int, post_id: int, add_comment: CommentPost, credentials: JwtAuthorizationCredentials = Security(jwt_access)):
     user_id: int = credentials["id"]
@@ -282,16 +282,14 @@ async def add_comment(user_post_id: int, post_id: int, add_comment: CommentPost,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    for user_posts in posts:
-        if user_posts["id"] == user_id:
-            for post in user_posts["posts"]:
-                if post["id"] == user_post_id:
-                    max_id = max((comment['id'] for comment in post['comments']), default=0) + 1
-                    new_comment_model = CommentGet(id=max_id, name=username, text=add_comment.text)
-                    post["comments"].append(new_comment_model.model_dump())
-                    return {"status": 200, "data": post["comments"]}
-    
-    raise HTTPException(status_code=404, detail=f"No post found with id: {post_id}")
-
-
-
+    async with aiosqlite.connect(db_file) as db:
+        cursor = await db.execute("SELECT * FROM posts WHERE user_id = ? AND id = ?", (user_post_id, post_id))
+        post = await cursor.fetchone()
+        if post:
+            await db.execute("INSERT INTO comments (post_id, name, text) VALUES (?, ?, ?)", (post[0], username, add_comment.text))
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM comments WHERE post_id = ?", (post[0],))
+            comments = await cursor.fetchall()
+            return {"status": 200, "data": [CommentGet(id=comment[0], name=comment[2], text=comment[3]) for comment in comments]}
+        else:
+            raise HTTPException(status_code=404, detail=f"No post found with id: {post_id}")
