@@ -217,7 +217,7 @@ async def get_api_user_posts(user_id: int):
             raise HTTPException(status_code=404, detail="Posts not found for user")
 
 # Получение всех постов и комментариев под ними
-@app.get("/posts", response_model=List[PostsGet])
+@app.get("/posts", response_model=List[PostGet])
 async def get_api_posts(limit: int = 5, offset: int = 0):
     async with aiosqlite.connect(db_file) as db:
         cursor = await db.execute("SELECT * FROM posts LIMIT ? OFFSET ?", (limit, offset))
